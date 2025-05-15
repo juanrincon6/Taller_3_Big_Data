@@ -131,11 +131,17 @@ print(rmse_df)
 #--- Exportar predicciones del modelo
 
 submission_template <- test
+submission_template$price <- round(y_hat_lm)
+
+write_csv(
+  submission_template %>% select(property_id, price),
+  file.path(pred_path, "submission_lm.csv")
+)
+
+submission_template <- test
 submission_template$price <- round(y_hat_en)
 
 write_csv(
   submission_template %>% select(property_id, price),
   file.path(pred_path, "submission_en.csv")
 )
-
-  
