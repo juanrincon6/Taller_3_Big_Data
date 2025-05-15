@@ -1,5 +1,3 @@
-#--------------------- Preprocesamiento DE DATOS--------------------------#
-
 rm(list = ls())
 gc()
 closeAllConnections()
@@ -60,19 +58,50 @@ procesar_texto <- function(df) {
     mutate(
       n_palabras_title = str_count(title, "\\w+"),
       n_palabras_desc = str_count(description, "\\w+"),
-      tiene_remodelado = str_detect(str_to_lower(description), "remodelad[oa]"),
-      tiene_lujoso = str_detect(str_to_lower(description), "lujoso|espectacular|moderno|exclusivo"),
-      tiene_bbq = str_detect(str_to_lower(description), "bbq"),
-      tiene_balcon = str_detect(str_to_lower(description), "balc[oó]n"),
-      tiene_terraza = str_detect(str_to_lower(description), "terraza"),
-      tiene_vista = str_detect(str_to_lower(description), "vista"),
-      tiene_club_house = str_detect(str_to_lower(description), "club house"),
-      tiene_chimenea = str_detect(str_to_lower(description), "chimenea")
+      tiene_remodelado = as.integer(str_detect(str_to_lower(description), "remodelad[oa]")),
+      tiene_lujoso = as.integer(str_detect(str_to_lower(description), "lujoso|espectacular|moderno|exclusivo")),
+      tiene_bbq = as.integer(str_detect(str_to_lower(description), "bbq")),
+      tiene_balcon = as.integer(str_detect(str_to_lower(description), "balc[oó]n")),
+      tiene_terraza = as.integer(str_detect(str_to_lower(description), "terraza")),
+      tiene_vista = as.integer(str_detect(str_to_lower(description), "vista")),
+      tiene_club_house = as.integer(str_detect(str_to_lower(description), "club house")),
+      tiene_chimenea = as.integer(str_detect(str_to_lower(description), "chimenea"))
     )
 }
 
 train <- procesar_texto(train)
 test <- procesar_texto(test)
+
+# Rellenar NA en las nuevas variables textuales
+train <- train %>%
+  mutate(
+    across(starts_with("tiene_"), ~replace_na(., 0)),
+    n_palabras_title = replace_na(n_palabras_title, 0),
+    n_palabras_desc  = replace_na(n_palabras_desc, 0)
+  )
+
+test <- test %>%
+  mutate(
+    across(starts_with("tiene_"), ~replace_na(., 0)),
+    n_palabras_title = replace_na(n_palabras_title, 0),
+    n_palabras_desc  = replace_na(n_palabras_desc, 0)
+  )
+
+
+
+sapply(train, function(x) sum(is.na(x)))
+sapply(test, function(x) sum(is.na(x)))
+
+# Observaciones con problemas de coordenadas en train y test
+train_na_coords <- train %>% filter(is.na(lat) | is.na(lon))
+test_na_coords  <- test %>% filter(is.na(lat) | is.na(lon))
+
+# Mostrar cuántas hay
+cat("Observaciones en train con NA en lat o lon:", nrow(train_na_coords), "\n")
+cat("Observaciones en test con NA en lat o lon:", nrow(test_na_coords), "\n")
+
+
+
 
 # Reemplazar NA por 0 en variables de texto/dummy
 train <- train %>%
