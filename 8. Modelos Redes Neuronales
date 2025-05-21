@@ -1,0 +1,87 @@
+
+####################### NEURAL NETWORK FINAL #######################
+
+#--- Limpiar entorno
+rm(list = ls())
+gc()
+closeAllConnections()
+
+#--- Cargar librerías
+if (!require("pacman")) install.packages("pacman")
+library(pacman)
+
+p_load(
+  tidyverse, nnet, caret, rio, readr
+)
+
+#--- Configurar rutas
+user <- Sys.getenv("USERNAME")
+if (user == "judel") {
+  base_path <- "C:/Users/judel/OneDrive/Documentos/ANDES/Semestre 2/Big data/tercera parte/Taller 3"
+} else if(user == "e125379") {
+  base_path <- "C:\Users\e125379\OneDrive - Mastercard\8. Uniandes\6. Big Data\4. Taller 3\1. Data\"
+}
+
+store_path <- file.path(base_path, "input", "stores")
+pred_path  <- file.path(base_path, "input", "predicciones")
+dir.create(pred_path, recursive = TRUE, showWarnings = FALSE)
+
+#--- Cargar datos finales
+train <- readRDS(file.path(store_path, "train_full_final.rds"))
+test  <- readRDS(file.path(store_path, "test_full_final.rds"))
+
+#--- Convertir factores
+train$property_type <- as.factor(train$property_type)
+test$property_type  <- as.factor(test$property_type)
+
+#--- Crear log(price)
+train <- train %>% mutate(logprice = log(price))
+
+#--- Partición interna de entrenamiento
+set.seed(1011)
+inTrain <- createDataPartition(y = train$logprice, p = .7, list = FALSE)
+bdtrain_is <- train[inTrain, ]
+bdtest_is  <- train[-inTrain, ]
+
+#--- Variables a usar (idénticas a fmla anterior)
+vars_modelo <- c(
+  "surface_covered", "rooms", "bedrooms", "bathrooms",
+  "property_type", "tiene_remodelado", "tiene_lujoso", "tiene_bbq",
+  "tiene_balcon", "tiene_terraza", "tiene_vista", "tiene_club_house",
+  "tiene_chimenea", "distancia_parque", "distancia_bus",
+  "distancia_avenida_principal", "distancia_universidad",
+  "distancia_policia", "distancia_restaurant", "distancia_colegio"
+)
+
+#--- Fórmula del modelo
+fmla <- as.formula(paste("price ~", paste(vars_modelo, collapse = " + ")))
+
+#--- Entrenar modelo nnet
+set.seed(123)
+nn_model <- nnet(
+  fmla, data = bdtrain_is,
+  size = 10,      # número de neuronas en la capa oculta
+  linout = TRUE,  # TRUE para regresión
+  maxit = 500     # número de iteraciones
+)
+
+#--- Predecir sobre hold-out interno
+bdtest_is$yhat_nn <- predict(nn_model, newdata = bdtest_is)
+bdtest_is$price_round <- round(bdtest_is$yhat_nn)
+
+#--- MAE
+MAE_nn <- mean(abs(bdtest_is$price - bdtest_is$yhat_nn))
+MAE_nn_R <- mean(abs(bdtest_is$price - bdtest_is$price_round))
+cat("MAE (Neural Network):", MAE_nn, "
+")
+cat("MAE Redondeado:", MAE_nn_R, "
+")
+
+#--- Predecir sobre conjunto test
+test$price <- round(predict(nn_model, newdata = test))
+
+#--- Exportar archivo final
+write_csv(
+  test %>% select(property_id, price),
+  file.path(pred_path, "submission_nn.csv")
+)
