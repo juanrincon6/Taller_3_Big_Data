@@ -1,3 +1,4 @@
+
 rm(list = ls())
 gc()
 closeAllConnections()
@@ -8,8 +9,8 @@ user <- Sys.getenv("USERNAME")
 
 if (user == "judel") {
   path <- "C:/Users/judel/OneDrive/Documentos/ANDES/Semestre 2/Big data/tercera parte/Taller 3/input"
-} else if(user == "---") {
-  path <- "-----"
+} else if(user == "e125379") {
+  path <- "C:\\Users\\e125379\\OneDrive - Mastercard\\8. Uniandes\\6. Big Data\\4. Taller 3\\1. Data\\"
 }else if(user == "-evaluador-") {
   path <- "-----"
 }
