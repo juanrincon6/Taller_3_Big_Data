@@ -1,4 +1,5 @@
 
+
 rm(list = ls())
 gc()
 closeAllConnections()
@@ -18,11 +19,11 @@ available_tags("amenity")
 # Configurar rutas
 user <- Sys.getenv("USERNAME")
 if (user == "judel") {
-  base_path <- "C:/Users/judel/OneDrive/Documentos/ANDES/Semestre 2/Big data/tercera parte/Taller 3"
-} else {
-  base_path <- choose.dir(caption = "Selecciona la carpeta base del taller")
+  base_path <- "C:/Users/judel/OneDrive/Documentos/ANDES/Semestre 2/Big data/tercera parte/Taller 3/input"
+} else if(user == "e125379") {
+  base_path <- "C:\\Users\\e125379\\OneDrive - Mastercard\\8. Uniandes\\6. Big Data\\4. Taller 3\\1. Data\\"
 }
-store_path <- file.path(base_path, "input", "stores")
+store_path <- file.path(base_path, "stores")
 
 # Cargar datos desde RDS
 train <- readRDS(file.path(store_path, "train_full.rds"))
