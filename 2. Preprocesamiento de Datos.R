@@ -1,179 +1,38 @@
+
 rm(list = ls())
 gc()
 closeAllConnections()
 
-library(pacman)
-pacman::p_load(tidyverse, rio, plotly, leaflet, rgeos, tmaptools, sf, osmdata,
-               tidymodels, skimr, stargazer, mapview, VIM, discrim, kknn, yardstick,
-               GGally, rattle, randomForest, C50, caret, scales, ggplot2, stringr)
+# este setwd por ahora no esta funcionando, toca que cada uno lo haga independiente mientras logro que funcione. att: Juan Jose
 
-# Configurar rutas
 user <- Sys.getenv("USERNAME")
+
 if (user == "judel") {
-  base_path <- "C:/Users/judel/OneDrive/Documentos/ANDES/Semestre 2/Big data/tercera parte/Taller 3"
-} else {
-  base_path <- choose.dir(caption = "Selecciona la carpeta base del taller")
-}
-store_path <- file.path(base_path, "input", "stores")
-
-# Cargar datos desde RDS
-train <- readRDS(file.path(store_path, "train.rds"))
-test <- readRDS(file.path(store_path, "test.rds"))
-
-# Inspección inicial
-dim(train); dim(test)
-glimpse(train); glimpse(test)
-
-# Revisión de categorías
-train %>% count(property_type)
-test %>% count(property_type)
-train %>% count(operation_type)
-test %>% count(operation_type)
-
-# Revisión de valores faltantes
-skim(train)
-skim(test)
-
-sapply(train, function(x) sum(is.na(x)))
-sapply(test, function(x) sum(is.na(x)))
-
-# Imputación: moda y mediana
-train <- train %>%
-  mutate(rooms = replace_na(rooms, 3),
-         bathrooms = replace_na(bathrooms, 2),
-         surface_covered = replace_na(surface_covered, median(surface_covered, na.rm = TRUE)),
-         surface_total = replace_na(surface_total, median(surface_total, na.rm = TRUE)))
-
-test <- test %>%
-  mutate(rooms = replace_na(rooms, 3),
-         bathrooms = replace_na(bathrooms, 2),
-         surface_covered = replace_na(surface_covered, median(surface_covered, na.rm = TRUE)),
-         surface_total = replace_na(surface_total, median(surface_total, na.rm = TRUE)))
-
-
-# Crear variables textuales a partir de título y descripción
-
-procesar_texto <- function(df) {
-  df %>%
-    mutate(
-      n_palabras_title = str_count(title, "\\w+"),
-      n_palabras_desc = str_count(description, "\\w+"),
-      tiene_remodelado = as.integer(str_detect(str_to_lower(description), "remodelad[oa]")),
-      tiene_lujoso = as.integer(str_detect(str_to_lower(description), "lujoso|espectacular|moderno|exclusivo")),
-      tiene_bbq = as.integer(str_detect(str_to_lower(description), "bbq")),
-      tiene_balcon = as.integer(str_detect(str_to_lower(description), "balc[oó]n")),
-      tiene_terraza = as.integer(str_detect(str_to_lower(description), "terraza")),
-      tiene_vista = as.integer(str_detect(str_to_lower(description), "vista")),
-      tiene_club_house = as.integer(str_detect(str_to_lower(description), "club house")),
-      tiene_chimenea = as.integer(str_detect(str_to_lower(description), "chimenea"))
-    )
+  path <- "C:/Users/judel/OneDrive/Documentos/ANDES/Semestre 2/Big data/tercera parte/Taller 3/input"
+} else if(user == "e125379") {
+  path <- "C:\\Users\\e125379\\OneDrive - Mastercard\\8. Uniandes\\6. Big Data\\4. Taller 3\\1. Data\\"
+}else if(user == "-evaluador-") {
+  path <- "-----"
 }
 
-train <- procesar_texto(train)
-test <- procesar_texto(test)
-
-# Rellenar NA en las nuevas variables textuales
-train <- train %>%
-  mutate(
-    across(starts_with("tiene_"), ~replace_na(., 0)),
-    n_palabras_title = replace_na(n_palabras_title, 0),
-    n_palabras_desc  = replace_na(n_palabras_desc, 0)
-  )
-
-test <- test %>%
-  mutate(
-    across(starts_with("tiene_"), ~replace_na(., 0)),
-    n_palabras_title = replace_na(n_palabras_title, 0),
-    n_palabras_desc  = replace_na(n_palabras_desc, 0)
-  )
+setwd(path)
 
 
+pacman:: p_load(tidyverse,skimr,fastDummies,labelled,parallel,doParallel)
 
-sapply(train, function(x) sum(is.na(x)))
-sapply(test, function(x) sum(is.na(x)))
-
-# Observaciones con problemas de coordenadas en train y test
-train_na_coords <- train %>% filter(is.na(lat) | is.na(lon))
-test_na_coords  <- test %>% filter(is.na(lat) | is.na(lon))
-
-# Mostrar cuántas hay
-cat("Observaciones en train con NA en lat o lon:", nrow(train_na_coords), "\n")
-cat("Observaciones en test con NA en lat o lon:", nrow(test_na_coords), "\n")
+n_cores<-detectCores()
+cl <- makePSOCKcluster(n_cores - 1) 
+registerDoParallel(cl)
 
 
+####IMPORTAR BASES 
+train <- read.csv("train.csv", header = TRUE, sep = ",")
+test <- read.csv("test.csv", header = TRUE, sep = ",")
 
 
-# Reemplazar NA por 0 en variables de texto/dummy
-train <- train %>%
-  mutate(
-    across(starts_with("tiene_"), ~replace_na(., 0)),
-    n_palabras_title = replace_na(n_palabras_title, 0),
-    n_palabras_desc  = replace_na(n_palabras_desc, 0)
-  )
+# Crear carpeta de almacenamiento si no existe
+if (!dir.exists("stores")) dir.create("stores")
 
-test <- test %>%
-  mutate(
-    across(starts_with("tiene_"), ~replace_na(., 0)),
-    n_palabras_title = replace_na(n_palabras_title, 0),
-    n_palabras_desc  = replace_na(n_palabras_desc, 0)
-  )
-
-
-# Agregar columna de precio por metro cuadrado
-train <- train %>%
-  mutate(precio_mt2 = price / surface_total)
-
-# Visualización con log
-ggplotly(
-  ggplot(train, aes(x = precio_mt2)) +
-    geom_histogram(fill = "gold2", alpha = 0.9) +
-    scale_x_log10(labels = dollar) +
-    theme_bw()
-)
-
-
-# Visualización leaflet
-train <- train %>%
-  mutate(color = case_when(
-    property_type == "Apartamento" ~ "red",
-    property_type == "Casa" ~ "blue"
-  ),
-  precio_por_mt2_sc = (precio_mt2 - min(precio_mt2)) / (max(precio_mt2) - min(precio_mt2)))
-
-html <- paste0("<b>Precio:</b>", dollar(train$price),
-               "<br> <b>Área:</b>", as.integer(train$surface_total), " mt2",
-               "<br> <b>Tipo:</b>", train$property_type,
-               "<br> <b>Alcobas:</b>", as.integer(train$rooms),
-               "<br> <b>Baños:</b>", as.integer(train$bathrooms))
-
-leaflet() %>%
-  addTiles() %>%
-  setView(lng = mean(train$lon), lat = mean(train$lat), zoom = 12) %>%
-  addCircles(lng = train$lon, lat = train$lat,
-             col = train$color, fillOpacity = 0.5,
-             radius = train$precio_por_mt2_sc * 10,
-             popup = html)
-
-# Variables categóricas como factor
-train$property_type <- as.factor(train$property_type)
-
-# GGPairs: relaciones entre variables
-ggpairs(train, columns = 2:8, aes(colour = property_type)) +
-  theme_minimal() +
-  theme(panel.background = element_rect(fill = "white"),
-        axis.text = element_blank(),
-        axis.title = element_blank())
-
-
-dir.create("stores", recursive = TRUE, showWarnings = FALSE)
-
-# Revisar NA en train
-cat("Resumen de NA en train:\n")
-print(colSums(is.na(train)))
-
-# Revisar NA en test
-cat("\nResumen de NA en test:\n")
-print(colSums(is.na(test)))
-
-saveRDS(train, file = file.path(store_path, "train_full.rds"))
-saveRDS(test, file = file.path(store_path, "test_full.rds"))
+# Guardar en formato RDS para futuras cargas rápidas
+saveRDS(train, "stores/train.rds")
+saveRDS(test, "stores/test.rds")
