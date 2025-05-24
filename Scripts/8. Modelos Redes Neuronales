@@ -19,6 +19,8 @@ if (user == "judel") {
   base_path <- "C:/Users/judel/OneDrive/Documentos/ANDES/Semestre 2/Big data/tercera parte/Taller 3/input"
 } else if(user == "e125379") {
   base_path <- "C:\\Users\\e125379\\OneDrive - Mastercard\\8. Uniandes\\6. Big Data\\4. Taller 3\\1. Data\\"
+} else if(user == "anamarrojas") {
+  base_path <- "C:\\Users\\anamarrojas\\Downloads\\Taller 3\\1. Data\\"
 }
 
 store_path <- file.path(base_path, "stores")
