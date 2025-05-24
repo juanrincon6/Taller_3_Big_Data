@@ -1,19 +1,21 @@
-############################## MODELOS DE REDES NEURONALES ##############################
-
 #--- Limpiar entorno
 rm(list = ls())
 gc()
-closeAllConnections()
+#closeAllConnections()
 
 #--- Cargar paquetes
 if (!require("pacman")) install.packages("pacman")
 library(pacman)
 
 p_load(
-  tidyverse, keras, recipes, yardstick, caret, readr
+  tidyverse, rio, plotly, leaflet, rgeos, units, sf, osmdata,
+  tidymodels, randomForest, rattle, spatialsample, tmaptools,
+  readr, skimr, caret, glmnet, stargazer, parallel, doParallel,
+  MLmetrics, themis, rlang, mlr, rpart, rpart.plot, kableExtra,
+  keras, tensorflow
 )
 
-#--- Configurar rutas según usuario
+# Configurar rutas según usuario
 user <- Sys.getenv("USERNAME")
 if (user == "judel") {
   base_path <- "C:/Users/judel/OneDrive/Documentos/ANDES/Semestre 2/Big data/tercera parte/Taller 3/input"
@@ -21,11 +23,15 @@ if (user == "judel") {
   base_path <- "C:\\Users\\e125379\\OneDrive - Mastercard\\8. Uniandes\\6. Big Data\\4. Taller 3\\1. Data\\"
 } else if(user == "anamarrojas") {
   base_path <- "C:\\Users\\anamarrojas\\Downloads\\Taller 3\\1. Data\\"
-}
+} 
 
 store_path <- file.path(base_path, "stores")
 pred_path  <- file.path(base_path, "predicciones")
 dir.create(pred_path, recursive = TRUE, showWarnings = FALSE)
+
+#--- Paralelización
+n_cores <- detectCores()
+cl <- makePSOCKcluster(n_cores - 1)
 
 #--- Cargar datos
 train <- readRDS(file.path(store_path, "train_full_final.rds"))
@@ -35,107 +41,154 @@ test  <- readRDS(file.path(store_path, "test_full_final.rds"))
 train$property_type <- as.factor(train$property_type)
 test$property_type  <- as.factor(test$property_type)
 
-#--- Crear log(price)
-train <- train %>% mutate(logprice = log(price))
+#--- Fórmula
+fmla <- price ~ surface_covered + rooms + bedrooms + bathrooms +
+  property_type + tiene_remodelado + tiene_lujoso + tiene_bbq +
+  tiene_balcon + tiene_terraza + tiene_vista + tiene_club_house +
+  tiene_chimenea + distancia_parque + distancia_bus +
+  distancia_avenida_principal + distancia_universidad +
+  distancia_policia + distancia_restaurant + distancia_colegio
 
-#--- Partición interna
-set.seed(1011)
-inTrain <- createDataPartition(y = train$logprice, p = .7, list = FALSE)
-bdtrain_is <- train[inTrain, ]
-bdtest_is  <- train[-inTrain, ]
+#--- Control de entrenamiento
+set.seed(123)
+fitControl <- trainControl(method = "cv", number = 10)
 
-#--- Variables del modelo
-vars_modelo <- c(
-  "surface_covered", "rooms", "bedrooms", "bathrooms",
-  "property_type", "tiene_remodelado", "tiene_lujoso", "tiene_bbq",
-  "tiene_balcon", "tiene_terraza", "tiene_vista", "tiene_club_house",
-  "tiene_chimenea", "distancia_parque", "distancia_bus",
-  "distancia_avenida_principal", "distancia_universidad",
-  "distancia_policia", "distancia_restaurant", "distancia_colegio"
+# --------------------------------------------------------
+# Modelo de Red Neuronal Simple
+# --------------------------------------------------------
+
+# Definir el modelo de red neuronal simple
+model_nn_simple <- keras_model_sequential() %>%
+  layer_dense(units = 64, activation = "relu", input_shape = c(ncol(train) - 1)) %>%  # Usamos input_shape con c()
+  layer_dense(units = 1)  # Capa de salida
+
+# Resumen del modelo
+summary(model_nn_simple)
+
+# Compilar el modelo
+model_nn_simple %>% compile(
+  loss = "mse",  # Función de pérdida
+  optimizer = "adam",  # Optimizador
+  metrics = c("mean_squared_error")  # Métrica
 )
 
-#--- Preprocesamiento
-rec <- recipe(logprice ~ ., data = bdtrain_is[, c(vars_modelo, "logprice")]) %>%
-  step_dummy(all_nominal_predictors()) %>%
-  step_normalize(all_numeric_predictors())
-
-prep_rec <- prep(rec)
-x_train <- bake(prep_rec, new_data = bdtrain_is) %>% select(-logprice)
-y_train <- bdtrain_is$logprice
-x_test <- bake(prep_rec, new_data = bdtest_is) %>% select(-logprice)
-y_test <- bdtest_is$logprice
-x_test_final <- bake(prep_rec, new_data = test)
-
-
-#--- Función para entrenar, predecir y exportar
-entrenar_modelo_nn <- function(nombre, arquitectura, epochs = 5) {
-  modelo <- keras_model_sequential()
-  for (capa in arquitectura) {
-    modelo <- modelo %>% layer_dense(units = capa$units, activation = capa$activation, input_shape = ifelse(capa$input, ncol(x_train), NULL))
-  }
-  modelo <- modelo %>% layer_dense(units = 1)  # Capa de salida
-  
-  modelo %>% compile(
-    loss = "mean_squared_error",
-    optimizer = optimizer_rmsprop(),
-    metrics = c("mean_squared_error")
-  )
-  
-  modelo %>% fit(as.matrix(x_train), y_train, epochs = epochs, batch_size = 32, verbose = 0)
-  
-  # Predicción interna
-  pred_is <- modelo %>% predict(as.matrix(x_test)) %>% as.vector()
-  bdtest_is[[paste0("yhat_", nombre)]] <<- exp(pred_is)
-  
-  # Predicción final
-  pred_test <- modelo %>% predict(as.matrix(x_test_final)) %>% as.vector()
-  test[[paste0("price_", nombre)]] <<- round(exp(pred_test))
-  
-  # Exportar archivo
-  write_csv(
-    test %>% select(property_id, !!sym(paste0("price_", nombre))) %>%
-      rename(price = !!sym(paste0("price_", nombre))),
-    file.path(pred_path, paste0("submission_nn_", nombre, ".csv"))
-  )
-  
-  # MAE
-  mae <- mean(abs(exp(pred_is) - exp(y_test)))
-  cat(paste0("MAE (", nombre, "): ", round(mae, 2), "\n"))
-}
-
-################################# MODELOS #################################
-
-#--- Modelo Simple
-entrenar_modelo_nn("simple", list(list(units = 1, activation = NULL, input = TRUE)))
-
-#--- Modelo ReLU
-entrenar_modelo_nn("relu", list(list(units = 1, activation = "relu", input = TRUE)))
-
-#--- Modelo tanh
-entrenar_modelo_nn("tanh", list(list(units = 1, activation = "tanh", input = TRUE)))
-
-#--- Modelo Profundo
-entrenar_modelo_nn("profundo", list(
-  list(units = 64, activation = "relu", input = TRUE)
-))
-
-#--- Modelo Avanzado
-entrenar_modelo_nn("avanzado", list(
-  list(units = 64, activation = "relu", input = TRUE),
-  list(units = 32, activation = "relu", input = FALSE)
-), epochs = 15)
-
-###################### COMPARACIÓN DE RESULTADOS ######################
-
-#--- Comparación de MAE
-mae_df <- tibble(
-  modelo = c("simple", "relu", "tanh", "profundo", "avanzado"),
-  MAE = c(
-    mean(abs(bdtest_is$price - bdtest_is$yhat_simple)),
-    mean(abs(bdtest_is$price - bdtest_is$yhat_relu)),
-    mean(abs(bdtest_is$price - bdtest_is$yhat_tanh)),
-    mean(abs(bdtest_is$price - bdtest_is$yhat_profundo)),
-    mean(abs(bdtest_is$price - bdtest_is$yhat_avanzado))
-  )
+# Entrenar el modelo
+history_simple <- model_nn_simple %>% fit(
+  as.matrix(train %>% select(-price)), train$price, 
+  epochs = 30,  # Número de épocas
+  batch_size = 32  # Tamaño del batch
 )
-print(mae_df)
+
+# Graficar la historia de entrenamiento
+plot(history_simple)
+
+
+
+# Predicciones con el modelo simple
+y_pred_nn_simple <- model_nn_simple %>% predict(as.matrix(test %>% select(-price)))
+
+# --------------------------------------------------------
+# Modelo de Red Neuronal Complejo
+# --------------------------------------------------------
+
+# Definir el modelo de red neuronal más complejo
+model_nn_complex <- keras_model_sequential() %>%
+  layer_dense(units = 128, activation = "relu", input_shape = c(ncol(train) - 1)) %>%
+  layer_dense(units = 64, activation = "relu") %>%
+  layer_dense(units = 32, activation = "relu") %>%
+  layer_dense(units = 1)  # Capa de salida
+
+# Resumen del modelo
+summary(model_nn_complex)
+
+# Compilar el modelo
+model_nn_complex %>% compile(
+  loss = "mse",  # Función de pérdida
+  optimizer = "adam",  # Optimizador
+  metrics = c("mean_squared_error")  # Métrica
+)
+
+# Entrenar el modelo
+history_complex <- model_nn_complex %>% fit(
+  as.matrix(train %>% select(-price)), train$price, 
+  epochs = 50,  # Número de épocas
+  batch_size = 32  # Tamaño del batch
+)
+
+# Graficar la historia de entrenamiento
+plot(history_complex)
+
+# Predicciones con el modelo complejo
+y_pred_nn_complex <- model_nn_complex %>% predict(as.matrix(test %>% select(-price)))
+
+# --------------------------------------------------------
+# Modelo Lineal, Ridge, Lasso y Elastic Net para comparación
+# --------------------------------------------------------
+
+# --------------------------------------------------------
+# Modelo Lineal (OLS)
+# --------------------------------------------------------
+
+modelo_lm <- caret::train(
+  fmla, data = train, method = "lm",
+  trControl = fitControl, preProcess = c("center", "scale")
+)
+
+# --------------------------------------------------------
+# Modelo Ridge (alpha = 0)
+# --------------------------------------------------------
+
+modelo_ridge <- caret::train(
+  fmla, data = train, method = "glmnet",
+  trControl = fitControl,
+  tuneGrid = expand.grid(alpha = 0, lambda = seq(13500000, 13700000, by = 100)),
+  preProcess = c("center", "scale")
+)
+
+# --------------------------------------------------------
+# Modelo Lasso (alpha = 1)
+# --------------------------------------------------------
+
+modelo_lasso <- caret::train(
+  fmla, data = train, method = "glmnet",
+  trControl = fitControl,
+  tuneGrid = expand.grid(alpha = 1, lambda = seq(100000, 210000, by = 100)),
+  preProcess = c("center", "scale")
+)
+
+# --------------------------------------------------------
+# Modelo Elastic Net (alpha entre 0 y 1)
+# --------------------------------------------------------
+
+modelo_en <- caret::train(
+  fmla, data = train, method = "glmnet",
+  trControl = fitControl,
+  tuneGrid = expand.grid(alpha = seq(0, 1, by = 0.1), lambda = seq(100000, 1000000, by = 10000)),
+  preProcess = c("center", "scale")
+)
+
+# --------------------------------------------------------
+# Comparación de Predicciones y RMSE
+# --------------------------------------------------------
+
+# Comparar RMSE para diferentes modelos
+rmse_df <- tibble(
+  OLS   = modelo_lm$results$RMSE,
+  RIDGE = modelo_ridge$results %>% filter(lambda == modelo_ridge$bestTune$lambda) %>% pull(RMSE),
+  LASSO = modelo_lasso$results %>% filter(lambda == modelo_lasso$bestTune$lambda) %>% pull(RMSE),
+  EN    = modelo_en$results %>% filter(
+    alpha == modelo_en$bestTune$alpha,
+    lambda == modelo_en$bestTune$lambda
+  ) %>% pull(RMSE)
+)
+
+# Imprimir RMSE para cada modelo
+print(rmse_df)
+
+# Exportar predicciones de la red neuronal simple y compleja
+submission_template <- test
+submission_template$price_nn_simple <- round(y_pred_nn_simple)
+submission_template$price_nn_complex <- round(y_pred_nn_complex)
+
+# Guardar las predicciones en un archivo CSV
+write_csv(submission_template %>% select(property_id, price_nn_simple, price_nn_complex), "predicciones_nn.csv")
