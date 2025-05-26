@@ -18,8 +18,8 @@ p_load(
 
 #--- Configurar rutas según usuario
 user <- Sys.getenv("USERNAME")
-if (user == "judel") {
-  base_path <- "C:/Users/judel/OneDrive/Documentos/ANDES/Semestre 2/Big data/tercera parte/Taller 3/input"
+if (user == "mario") {
+  base_path <- "C:/Users/mario/Documents/Taller_3_Big_Data-main"
 } else if(user == "e125379") {
   base_path <- "C:\\Users\\e125379\\OneDrive - Mastercard\\8. Uniandes\\6. Big Data\\4. Taller 3\\1. Data\\"
 }
@@ -48,6 +48,17 @@ fmla <- price ~ surface_covered + rooms + bedrooms + bathrooms +
   distancia_avenida_principal + distancia_universidad +
   distancia_policia + distancia_restaurant + distancia_colegio
 
+
+#--- Estadisticas descritivas
+
+summary(train[, c("price", "surface_covered", "rooms", "bedrooms", "bathrooms",
+                  "property_type", "tiene_remodelado", "tiene_lujoso", "tiene_bbq",
+                  "tiene_balcon", "tiene_terraza", "tiene_vista", "tiene_club_house",
+                  "tiene_chimenea", "distancia_parque", "distancia_bus",
+                  "distancia_avenida_principal", "distancia_universidad",
+                  "distancia_policia", "distancia_restaurant", "distancia_colegio")])
+
+
 #--- Control de entrenamiento
 set.seed(123)
 fitControl <- trainControl(method = "cv", number = 10)
@@ -61,6 +72,9 @@ modelo_lm <- caret::train(
 )
 summary(modelo_lm)
 y_hat_lm <- predict(modelo_lm, newdata = test)
+
+library(knitr)
+kable(modelo_tidy)
 
 #--- Modelo Ridge (alpha = 0)
 
