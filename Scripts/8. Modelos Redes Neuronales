@@ -10,7 +10,7 @@ if (!require("pacman")) install.packages("pacman")
 library(pacman)
 
 p_load(
-  tidyverse, rio, keras, caret, Metrics, xtable
+  tidyverse, rio, keras, caret, Metrics
 )
 
 # Configurar rutas
@@ -31,28 +31,24 @@ dir.create(pred_path, recursive = TRUE, showWarnings = FALSE)
 train <- readRDS(file.path(store_path, "train_full_final.rds"))
 test  <- readRDS(file.path(store_path, "test_full_final.rds"))
 
-############################## Imputación de Missing Values  ############################
-
-# Imputar con la moda si hay variables de caractéres
+# Imputación
 Mode <- function(x) {
   ux <- unique(na.omit(x))
   ux[which.max(tabulate(match(x, ux)))]
 }
 
-# Imputar en Train  
 train_clean_imputed <- train %>%
   mutate(across(where(is.numeric), ~ ifelse(is.na(.), mean(., na.rm = TRUE), .))) %>%
   mutate(across(where(is.factor), ~ ifelse(is.na(.), Mode(.), .))) %>%
   mutate(across(where(is.logical), ~ as.numeric(.)))
 
-# Imputar en Test  
 test_clean_imputed <- test %>%
   mutate(across(where(is.numeric), ~ ifelse(is.na(.), mean(., na.rm = TRUE), .))) %>%
   mutate(across(where(is.factor), ~ ifelse(is.na(.), Mode(.), .))) %>%
   mutate(across(where(is.logical), ~ as.numeric(.)))
 
-# Modelo
-fmla <- price ~ surface_covered + rooms + bedrooms + bathrooms +
+# Fórmula con logprice
+fmla <- logprice ~ surface_covered + rooms + bedrooms + bathrooms +
   property_type + tiene_remodelado + tiene_lujoso + tiene_bbq +
   tiene_balcon + tiene_terraza + tiene_vista + tiene_club_house +
   tiene_chimenea + distancia_parque + distancia_bus +
@@ -61,13 +57,13 @@ fmla <- price ~ surface_covered + rooms + bedrooms + bathrooms +
 
 vars_modelo <- all.vars(fmla)
 train_data <- train_clean_imputed %>% select(all_of(vars_modelo))
-test_data <- test_clean_imputed %>% select(all_of(vars_modelo))
+test_data <- test_clean_imputed %>% select(all_of(vars_modelo[-1]))  # sin logprice
 
 # División entrenamiento / validación
 set.seed(123)
-split_idx <- createDataPartition(train_data$price, p = 0.8, list = FALSE)
+split_idx <- createDataPartition(train_data$logprice, p = 0.8, list = FALSE)
 train_set <- train_data[split_idx, ]
-test_set   <- train_data[-split_idx, ]
+test_set  <- train_data[-split_idx, ]
 
 # Preprocesamiento
 keras <- function(df) {
@@ -77,10 +73,10 @@ keras <- function(df) {
 }
 
 train_set <- keras(train_set)
-test_set   <- keras(test_set)
+test_set  <- keras(test_set)
+test_data <- keras(test_data)
 
-############################## Redes Neuronales Simples ############################
-
+# Modelo simple
 model_simple <- keras_model_sequential() %>%
   layer_dense(units = 64, activation = 'relu', input_shape = ncol(train_set) - 1) %>%
   layer_dense(units = 32, activation = 'relu') %>%
@@ -93,18 +89,17 @@ model_simple %>% compile(
 )
 
 history_simple <- model_simple %>% fit(
-  as.matrix(train_set[, -which(names(train_set) == "price")]),
-  train_set$price,
+  as.matrix(train_set[, -which(names(train_set) == "logprice")]),
+  train_set$logprice,
   epochs = 30,
   batch_size = 32,
   validation_data = list(
-    as.matrix(test_set[, -which(names(test_set) == "price")]),
-    test_set$price
+    as.matrix(test_set[, -which(names(test_set) == "logprice")]),
+    test_set$logprice
   )
 )
 
-############################## Redes Neuronales Complejas ############################
-
+# Modelo complejo
 model_complex <- keras_model_sequential() %>%
   layer_dense(units = 128, activation = 'relu', input_shape = ncol(train_set) - 1) %>%
   layer_dropout(rate = 0.3) %>%
@@ -122,67 +117,48 @@ model_complex %>% compile(
 early_stop <- callback_early_stopping(monitor = "val_loss", patience = 10, restore_best_weights = TRUE)
 
 history_complex <- model_complex %>% fit(
-  as.matrix(train_set[, -which(names(train_set) == "price")]),
-  train_set$price,
+  as.matrix(train_set[, -which(names(train_set) == "logprice")]),
+  train_set$logprice,
   epochs = 100,
   batch_size = 64,
   validation_data = list(
-    as.matrix(test_set[, -which(names(test_set) == "price")]),
-    test_set$price
+    as.matrix(test_set[, -which(names(test_set) == "logprice")]),
+    test_set$logprice
   ),
-  callbacks = list(early_stop),
-  optimizer = optimizer_adam(learning_rate = 0.001)  # Ajustar el learning rate
+  callbacks = list(early_stop)
 )
 
-############################## Predicciones ############################
-test_data$price <- NULL
-test_data <- test_data %>% 
-  mutate(across(where(is.character), ~ as.numeric(as.factor(.))))
+# Predicciones sobre test
+y_hat_simple <- exp(predict(model_simple, as.matrix(test_data)))
+y_hat_complex <- exp(predict(model_complex, as.matrix(test_data)))
 
-# Convertir las variables categóricas a numéricas
-test_data <- test_data %>%
-  mutate(across(where(is.factor), ~ as.numeric(as.factor(.)))) %>%
-  mutate(across(where(is.logical), ~ as.numeric(.)))  # Convertir lógicos a numéricos
-
-# Realizar la predicción con el modelo simple
-y_hat_simple <- predict(model_simple, as.matrix(test_data))
-
-# Crear el archivo de envío para el modelo simple
+# Exportar predicciones
 submission_simple <- test %>% select(property_id)
-submission_simple$price <- round(y_hat_simple)
-# Convertir la columna price a un vector numérico simple
-submission_simple$price <- as.vector(submission_simple$price)
+submission_simple$price <- round(as.vector(y_hat_simple))
 write_csv(submission_simple, file.path(pred_path, "submission_nn_simple.csv"))
 
-# Realizar la predicción con el modelo complejo
-y_hat_complex <- predict(model_complex, as.matrix(test_data))
-
-# Crear el archivo de envío para el modelo complejo
 submission_complex <- test %>% select(property_id)
-submission_complex$price <- round(y_hat_complex)
-submission_complex$price <- as.vector(submission_complex$price)
+submission_complex$price <- round(as.vector(y_hat_complex))
 write_csv(submission_complex, file.path(pred_path, "submission_nn_complex.csv"))
 
+# Evaluación en validación
+val_x <- as.matrix(test_set[, -which(names(test_set) == "logprice")])
+val_y <- exp(test_set$logprice)
 
-# Predicciones en el conjunto de validación
-val_x <- as.matrix(test_set[, -which(names(test_set) == "price")])
-val_y <- test_set$price
+pred_simple <- exp(predict(model_simple, val_x))
+pred_complex <- exp(predict(model_complex, val_x))
 
-# Modelo simple
-pred_simple <- model_simple %>% predict(val_x)
 mae_simple <- mae(val_y, pred_simple)
 rmse_simple <- rmse(val_y, pred_simple)
 r2_simple <- 1 - sum((val_y - pred_simple)^2) / sum((val_y - mean(val_y))^2)
 mape_simple <- mape(val_y, pred_simple)
 
-# Modelo complejo
-pred_complex <- model_complex %>% predict(val_x)
 mae_complex <- mae(val_y, pred_complex)
 rmse_complex <- rmse(val_y, pred_complex)
 r2_complex <- 1 - sum((val_y - pred_complex)^2) / sum((val_y - mean(val_y))^2)
 mape_complex <- mape(val_y, pred_complex)
 
-# Crear tabla de métricas
+# Tabla de métricas
 tabla_metricas <- data.frame(
   Métrica = c("MAE", "RMSE", "R²", "MAPE"),
   Modelo_Simple = c(mae_simple, rmse_simple, r2_simple, mape_simple),
@@ -192,4 +168,4 @@ tabla_metricas <- data.frame(
 tabla_metricas <- tabla_metricas %>%
   mutate(across(where(is.numeric), ~ round(., 4)))
 
-write.csv(tabla_metricas, paste0(pred_path, "tabla_metricas_modelos_nn.csv"), row.names = FALSE)
+write.csv(tabla_metricas, file.path(pred_path, "tabla_metricas_modelos_nn.csv"), row.names = FALSE)
