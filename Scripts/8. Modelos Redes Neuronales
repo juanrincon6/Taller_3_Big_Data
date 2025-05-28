@@ -165,8 +165,8 @@ write_csv(submission_complex, file.path(pred_path, "submission_nn_complex.csv"))
 
 
 # Predicciones en el conjunto de validación
-val_x <- as.matrix(val_set[, -which(names(test_set) == "price")])
-val_y <- val_set$price
+val_x <- as.matrix(test_set[, -which(names(test_set) == "price")])
+val_y <- test_set$price
 
 # Modelo simple
 pred_simple <- model_simple %>% predict(val_x)
