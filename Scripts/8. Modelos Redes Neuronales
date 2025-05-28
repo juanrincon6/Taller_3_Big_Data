@@ -165,7 +165,7 @@ write_csv(submission_complex, file.path(pred_path, "submission_nn_complex.csv"))
 
 
 # Predicciones en el conjunto de validación
-val_x <- as.matrix(val_set[, -which(names(val_set) == "price")])
+val_x <- as.matrix(val_set[, -which(names(test_set) == "price")])
 val_y <- val_set$price
 
 # Modelo simple
@@ -189,5 +189,7 @@ tabla_metricas <- data.frame(
   Modelo_Complejo = c(mae_complex, rmse_complex, r2_complex, mape_complex)
 )
 
-# Mostrar tabla con xtable
-print(xtable(tabla_metricas, digits = 4), type = "html")
+tabla_metricas <- tabla_metricas %>%
+  mutate(across(where(is.numeric), ~ round(., 4)))
+
+write.csv(tabla_metricas, paste0(pred_path, "tabla_metricas_modelos_nn.csv"), row.names = FALSE)
